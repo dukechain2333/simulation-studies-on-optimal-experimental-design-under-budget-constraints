@@ -1,0 +1,909 @@
+---
+title: "Simulation Studies on Optimal Experimental Design under Budget Constraints"
+author: "William Qian"
+date: "December 2024"
+format: pdf
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+library(sandwich)
+library(lmtest)
+library(lme4)
+library(lmerTest)
+library(gtsummary)
+```
+
+# Abstract
+
+# Introduction
+
+Optimal experimental design is a cornerstone of rigorous scientific research, aiming to maximize the efficiency and validity of experiments through strategic decisions on sample size, treatment allocation, and measurement strategies. However, researchers often face significant budget constraints that limit available resources, necessitating the development of experimental designs that achieve research objectives while adhering to financial limitations. Clustered study designs—where observations are grouped into clusters (such as schools, hospitals, or communities) and treatments are assigned at the cluster level—are frequently employed across various fields, including medicine, social sciences, and agriculture. While these designs offer logistical advantages and cost-effectiveness, they introduce complexities due to intra-cluster correlations that must be accounted for in both the design and analysis phases.
+
+This study explores optimal experimental designs under budget constraints through comprehensive simulation studies. By systematically varying key parameters and data collection costs, we aim to identify designs that minimize estimation errors within predefined budget limits. Specifically, we focus on: (1) evaluating the performance of different feasible designs under a fixed budget for normal and Poisson-distributed outcomes, examining how the number of clusters (G) and observations per cluster (R) influence bias, mean squared error (MSE), and coverage probability of estimated treatment effects; (2) investigating the relationships between data-generating parameters—such as treatment effect size, between-cluster variance, and within-cluster variance—and total costs to inform optimal resource allocation between clusters and observations within clusters; and (3) extending the simulation study to Poisson-distributed outcomes common in count data, modifying data generation and analysis methods accordingly, and assessing how optimal designs differ from those with normally distributed outcomes. To achieve these aims, we develop a suite of functions in R for data simulation, balanced treatment assignment, treatment effect estimation using generalized linear models with cluster-robust standard errors, and design performance evaluation. The insights from our simulations contribute to a deeper understanding of resource allocation in experimental planning, guiding researchers in designing studies that are both cost-effective and statistically robust.
+
+# Simulation Design
+
+We use ADEMP framework to conduct the simulation study.
+
+## Aim
+
+Our aim is to estimate the treatment effect in clustered experimental designs under budget constraints. We seek to identify the optimal allocation between the number of clusters (G) and the number of observations per cluster (R) that provides accurate and efficient estimation of the treatment effect within a fixed budget.
+
+## Data Generation
+
+### Clustered Data Structure
+
+We consider the structure of the clusters as follows:
+
+- Clusters: $j = 1,2,..., G$
+- Observations within clusters: $i = 1,2,..., R$
+
+Then, the total number of observations is $N = G \times R$.
+
+### Data Generation Process
+
+Each cluster $j$ is randomly assigned to either the treatment group ($X_j = 1$) or the control group ($X_j = 0$). The treatment effect is defined as $\beta$, representing the difference in the outcome between the treatment and control groups. The data generation process is as follows:
+
+#### Normal Distribution
+
+We assume a hierarchical linear model for $Y_{ij}$:
+
+$$
+\begin{aligned}
+\mu_{i0} &= \alpha + \beta X_j \\
+\mu_i | \epsilon_j &= \mu_{i0} + \epsilon_j \text{  with  } \epsilon_j \sim N(0, \gamma^2) \\
+Y_{ij} | \mu_i &= \mu_i + e_{ij} \text{  with  } e_{ij} \sim N(0, \sigma^2)
+\end{aligned}
+$$
+
+#### Poisson Distribution
+
+For Poisson-distributed outcomes, we assume a hierarchical Poisson model for $Y_{ij}$:
+
+$$
+\begin{aligned}
+log(\mu_{i0}) &= N(\alpha + \beta X_j, \gamma^2) \\
+Y_{ij} | \mu_i &= Poisson(\mu_i)
+\end{aligned}
+$$
+To be more detailed, $\gamma^2$ can be understood as the between-cluster variance, $\sigma^2$ as the within-cluster variance.
+
+### Cost Constraints
+
+The total cost $C$, cost per cluster $c_1$ and cost per observation $c_2$ are fixed in each simulation ($c_2 << c_1$). The total cost is calculated as:
+
+$$
+C = G \times (c_1 + (R - 1) \times c_2)
+$$
+
+## Estimands
+
+The estimand of interest is the treatment effect $\beta$, which represents the difference in the outcome between the treatment and control groups. We aim to estimate $\beta$ with minimal bias and mean squared error (MSE) within the budget constraints, suggesting that the optimal design should balance the number of clusters and observations per cluster to achieve accurate and efficient estimation.
+
+## Methods
+
+We employ generalized linear models (GLMs) to estimate the treatment effect:
+
+- Normal distribution: A linear regression model using glm() with a Gaussian family.
+- Poisson distribution: A log-linear model using glm() with a Poisson family.
+
+## Performance Metrics
+
+We evaluate the performance of each design based on the following metrics:
+
+- Bias: $bias = E[\hat{\beta}] - \beta$
+- Mean squared error (MSE): $MSE = E[(\hat{\beta} - \beta)^2]$
+- Coverage probability: Proportion of confidence intervals that contain the true treatment effect.
+
+Additionally, our estimator of $\beta$ is a unbiased estimator, so in a successful simulation, the bias should be close to zero. However, the MSE might be high due to the variance of the estimator. So in the following simulations, we will focus more on the MSE.
+
+## Function Design
+
+To implement the simulation study efficiently and flexibly, we developed a set of modular functions in R, each dedicated to a specific aspect of the simulation process. This modular design enhances code readability, reusability, and maintainability, allowing us to systematically explore different experimental designs under budget constraints.
+
+First, we designed the calculate_feasible_designs function, which computes all possible combinations of the number of clusters ($G$) and the number of observations per cluster ($R$) that satisfy the given budget constraints. This function takes the total budget and the costs associated with recruiting participants—both the fixed cost per cluster($c_1$) and the variable cost per additional participant within a cluster($c_2$) as inputs. By iterating through feasible values of $G$ and calculating the corresponding maximum $R$ for each, the function generates a list of design configurations that do not exceed the budget. This approach ensures that only viable designs are considered in the simulations, facilitating an efficient exploration of the design space.
+
+Next, the assign_treatment function assigns clusters to either the treatment group or the control group, ensuring that both groups are represented in the study. This function is crucial because having at least one cluster in each group is necessary for estimating the treatment effect. The function begins by assigning one cluster to each group and then randomly assigns the remaining clusters, maintaining the randomness essential for unbiased treatment effect estimation. This careful assignment prevents scenarios where all clusters might inadvertently be assigned to the same group, which would invalidate the comparative analysis.
+
+The generate_data function is responsible for simulating the clustered data based on the specified parameters and the chosen outcome distribution (normal or Poisson). It incorporates the treatment assignments from the assign_treatment function and generates cluster-level random effects to introduce between-cluster variability. For each observation within a cluster, the function computes the outcome using the appropriate statistical model: a linear model for normally distributed outcomes or a log-linear model for Poisson-distributed outcomes. This function ensures that the simulated data accurately reflect the hierarchical structure and variability inherent in clustered experimental designs, providing a realistic basis for evaluating different design configurations.
+
+To estimate the treatment effect from the simulated data, we developed the estimate_treatment_effect function. This function fits a generalized linear model (GLM) appropriate for the specified outcome distribution and adjusts for clustering by computing cluster-robust standard errors using sandwich estimators. The use of cluster-robust standard errors is essential to obtain valid statistical inference in the presence of intra-cluster correlation. The function extracts the estimated treatment effect, its standard error, and calculates the p-value to determine statistical significance. This standardized approach to estimation allows for consistent evaluation of treatment effects across different simulated datasets and design configurations.
+
+The run_simulation function orchestrates the simulation process by repeatedly generating data and estimating the treatment effect for a specified design configuration. It runs a predetermined number of simulation iterations (replications) to assess the variability and reliability of the treatment effect estimates for that design. By aggregating results across simulations, this function enables us to compute performance metrics such as bias, mean squared error, coverage probability, and statistical power for each design. This iterative process is critical for understanding the statistical properties of the estimators under different design scenarios.
+
+Finally, the evaluate_design function analyzes the simulation results to compute the performance metrics for each design configuration. It calculates the bias of the treatment effect estimator by comparing the average estimated treatment effect across simulations to the true effect size used in data generation. The function also computes the mean squared error, which reflects both the variance and the bias of the estimator, and the coverage probability of the confidence intervals, indicating how often the true treatment effect is captured within the estimated intervals. These metrics provide a comprehensive assessment of each design's effectiveness in estimating the treatment effect accurately and efficiently within the budget constraints.
+
+Overall, this modular function design facilitates a systematic and thorough exploration of optimal experimental designs under budget constraints. By compartmentalizing each step of the simulation process into dedicated functions, we enhance the clarity and reproducibility of our simulation study, enabling us to draw meaningful conclusions about resource allocation in experimental planning. The functions work cohesively to simulate realistic clustered data, perform valid statistical analyses, and evaluate the performance of various experimental designs, thereby contributing valuable insights into the optimization of experimental design under practical constraints.
+
+```{r simulation_functions, include=FALSE}
+# Function to calculate feasible designs
+calculate_feasible_designs <- function(budget, c1, c2) {
+  feasible_designs <- list()
+  max_clusters <- floor(budget / c1)
+  
+  for (G in 2:max_clusters) {  # At least 2 clusters needed for comparison
+    max_R <- floor((budget - G * c1) / (G * c2)) + 1
+    if (max_R >= 1) {
+      feasible_designs[[length(feasible_designs) + 1]] <- list(G = G, R = max_R)
+    }
+  }
+  
+  return(feasible_designs)
+}
+
+# Function to assign treatments ensuring both groups are represented
+assign_treatment <- function(G) {
+  if (G < 2) {
+    stop("The number of clusters (G) must be at least 2.")
+  }
+  
+  # Start with one cluster in each group
+  Treatment <- c(0, 1)
+  
+  if (G > 2) {
+    # Assign remaining clusters randomly
+    remaining_treatments <- sample(0:1, G - 2, replace = TRUE)
+    Treatment <- c(Treatment, remaining_treatments)
+  }
+  
+  # Shuffle the treatments to randomize cluster assignments
+  Treatment <- sample(Treatment)
+  
+  return(Treatment)
+}
+
+# Function to generate data in long format
+generate_data <- function(G, R, alpha, beta, gamma2, sigma2, distribution = 'normal') {
+  Treatment <- assign_treatment(G)
+  
+  # Generate cluster-level random effects
+  if (distribution == 'normal') {
+    epsilon <- rnorm(G, mean = 0, sd = sqrt(gamma2))
+  } else if (distribution == 'poisson') {
+    epsilon <- rnorm(G, mean = 0, sd = sqrt(gamma2))
+  }
+  
+  # Generate cluster means
+  cluster_means <- alpha + beta * Treatment + epsilon
+  
+  # Create a data frame with all observations
+  data_long <- data.frame(
+    Cluster = rep(1:G, each = R),
+    Treatment = rep(Treatment, each = R),
+    Y = NA
+  )
+  
+  # Generate observations based on distribution
+  if (distribution == 'normal') {
+    data_long$Y <- rnorm(n = G * R, mean = rep(cluster_means, each = R), sd = sqrt(sigma2))
+  } else if (distribution == 'poisson') {
+    mu <- exp(rep(cluster_means, each = R))
+    data_long$Y <- rpois(n = G * R, lambda = mu)
+  }
+  
+  return(data_long)
+}
+
+
+# Function to estimate treatment effect using mixed-effects model
+estimate_treatment_effect <- function(data_long, distribution = 'normal') {
+  
+  data_long$Cluster <- as.factor(data_long$Cluster)
+  
+  if (distribution == 'normal') {
+    model <- glm(Y ~ Treatment, data = data_long, family = gaussian())
+  } else if (distribution == 'poisson') {
+    model <- glm(Y ~ Treatment, data = data_long, family = poisson())
+  }
+  
+  cluster_vcov <- vcovCL(model, cluster = data_long$Cluster)
+  beta_hat <- coef(model)["Treatment"]
+  se <- sqrt(cluster_vcov["Treatment", "Treatment"])
+  
+  z_value <- beta_hat / se
+  p_value <- 2 * (1 - pnorm(abs(z_value)))
+  
+  power <- p_value < 0.05
+  
+  return(list(
+    estimate = beta_hat,
+    se = se,
+    p_value = p_value,
+    power = power
+  ))
+}
+
+# Function to run simulation for a design
+run_simulation <- function(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims = 1000, distribution = 'normal') {
+  results <- data.frame(
+    estimate = numeric(n_sims),
+    se = numeric(n_sims),
+    p_value = numeric(n_sims),
+    power = logical(n_sims)
+  )
+  
+  for (sim in 1:n_sims) {
+    data_long <- generate_data(G, R, alpha, beta, gamma2, sigma2, distribution)
+    estimates <- estimate_treatment_effect(data_long, distribution)
+    
+    results$estimate[sim] <- estimates$estimate
+    results$se[sim] <- estimates$se
+    results$p_value[sim] <- estimates$p_value
+    results$power[sim] <- estimates$power
+  }
+  
+  total_cost <- G * (c1 + (R - 1) * c2)
+  
+  return(list(
+    results = results,
+    G = G,
+    R = R,
+    total_cost = total_cost
+  ))
+}
+
+
+# Function to evaluate design performance
+evaluate_design <- function(simulation_results, beta) {
+  results <- simulation_results$results
+  G <- simulation_results$G
+  R <- simulation_results$R
+  total_cost <- simulation_results$total_cost
+  
+  bias <- mean(results$estimate, na.rm = TRUE) - beta
+  mse <- mean((results$estimate - beta)^2, na.rm = TRUE)
+  coverage <- mean(abs(results$estimate - beta) <= 1.96 * results$se, na.rm = TRUE)
+  
+  return(list(
+    G = G,
+    R = R,
+    total_cost = total_cost,
+    bias = bias,
+    mse = mse,
+    coverage = coverage
+  ))
+}
+```
+
+# Results
+
+## Alpha and Beta
+
+```{r normal_alpha, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+beta <- 0.5
+gamma2 <- 0.5
+sigma2 <- 1
+n_sims <- 100
+
+alpha_values <- seq(0, 3, by = 0.5)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_normal_alpha <- data.frame()
+
+for (alpha in alpha_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims)
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_normal_alpha <- rbind(design_performance_normal_alpha, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      alpha = alpha,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_normal_alpha, "../Results/design_performance_normal_alpha.csv")
+
+```
+
+```{r normal_beta, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+alpha <- 5
+gamma2 <- 0.5
+sigma2 <- 1
+n_sims <- 100
+
+beta_values <- seq(0, 3, by = 0.5)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_normal_beta <- data.frame()
+
+for (beta in beta_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims)
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_normal_beta <- rbind(design_performance_normal_beta, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      beta = beta,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_normal_beta, "../Results/design_performance_normal_beta.csv")
+
+```
+
+```{r normal_alpha_results}
+# read results
+design_performance_normal_alpha <- read.csv("../Results/design_performance_normal_alpha.csv")
+
+normal_alpha_results_plot <- ggplot(design_performance_normal_alpha, aes(x = G, y = mse, color = factor(alpha))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal() +
+  theme(legend.position="none")
+
+normal_alpha_results_table <- tbl_summary(design_performance_normal_alpha %>% select(c(bias, mse, coverage, alpha)), by = alpha) %>%
+  add_p()
+
+normal_alpha_results_optimal_table <- kable(design_performance_normal_alpha %>%
+  group_by(alpha) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]), caption = "")
+
+normal_alpha_results_optimal_plot <- design_performance_normal_alpha %>%
+  group_by(alpha) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = alpha, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Alpha",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+From the equation $\mu_{i0} = \alpha + \beta X_j$, we can boldly assume that neither of the $\alpha$ and $\beta$ will have effect on our estimands. In order to verify this, we can run the simulation with different $\alpha$ and $\beta$ values.
+
+```{r normal_beta_results}
+# read results
+design_performance_normal_beta <- read.csv("../Results/design_performance_normal_beta.csv")
+
+normal_beta_results_plot <- ggplot(design_performance_normal_beta, aes(x = G, y = mse, color = factor(beta))) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal() +
+  theme(legend.position="none")
+
+normal_beta_results_table <- tbl_summary(design_performance_normal_beta %>% select(c(bias, mse, coverage, beta)), by = beta) %>%
+  add_p()
+
+normal_beta_results_optimal_table <- kable(design_performance_normal_beta %>% 
+  group_by(beta) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]), caption = "")
+
+normal_beta_results_optimal_plot <- design_performance_normal_beta %>%
+  group_by(beta) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = beta, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(x = "Beta",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+In Figure 1, each color represents a different $\alpha$ ($\beta$) value. We observed that in both Figure 1 (a) and Figure 1 (b), the trend of the MSE is collapsed with each other. This indicates that the $\alpha$ and $\beta$ values do not have significant effect on the estimands.
+
+```{r}
+#| label: fig-normal_alpha_beta_1
+#| fig-cap: "MSE vs Clusters for Different Alpha and Beta Values"
+#| fig-subcap: 
+#|   - "Alpha"
+#|   - "Beta"
+#| layout-ncol: 2
+#| fig-cap-location: top
+
+
+normal_alpha_results_plot
+normal_beta_results_plot
+```
+
+Further more, we selected the optimal designs for different $\alpha$ and $\beta$ values. Table 1 shows that with different $\alpha$ and $\beta$ values, the optimal MSE is very close to each other. We did a ANOVA test on the results and find that both of the p-value for $\alpha$ and $\beta$ results are >0.9, suggesting that there is no significant difference between the optimal MSE for different $\alpha$ and $\beta$ values. All of these results indicate that the $\alpha$ and $\beta$ values do not have significant effect on our ability to estimate the treatment effect.
+
+```{r}
+#| label: tbl-normal_alpha_beta
+#| tbl-cap: "Optimal Designs for Different Alpha Values and Beta Values"
+#| tbl-subcap: 
+#|     - "Alpha"
+#|     - "Beta"
+#| layout-ncol: 2
+#| tbl-cap-location: top
+
+normal_alpha_results_optimal_table
+normal_beta_results_optimal_table
+```
+
+```{r include=FALSE}
+normal_alpha_results_table
+normal_beta_results_table
+```
+
+## Gamma
+
+```{r normal_gamma2, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+alpha <- 5
+beta <- 0.5
+sigma2 <- 1
+n_sims <- 100
+
+gamma2_values <- seq(0.1, 3, by = 0.2)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_normal_gamma2 <- data.frame()
+
+for (gamma2 in gamma2_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims)
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_normal_gamma2 <- rbind(design_performance_normal_gamma2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      gamma2 = gamma2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_normal_gamma2, "../Results/design_performance_normal_gamma2.csv")
+
+```
+
+```{r poisson_gamma2, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+alpha <- 5
+beta <- 0.5
+sigma2 <- 1
+n_sims <- 100
+
+gamma2_values <- seq(0.1, 3, by = 0.2)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_poisson_gamma2 <- data.frame()
+
+for (gamma2 in gamma2_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims, distribution = 'poisson')
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_poisson_gamma2  <- rbind(design_performance_poisson_gamma2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      gamma2 = gamma2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_poisson_gamma2, "../Results/design_performance_poisson_gamma2.csv")
+
+```
+
+```{r poisson_gamma2_results}
+# read results
+design_performance_poisson_gamma2 <- read.csv("../Results/design_performance_poisson_gamma2.csv")
+
+ggplot(design_performance_poisson_gamma2, aes(x = G, y = mse, color = factor(gamma2))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different Gamma2 Values (Poisson)",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+tbl_summary(design_performance_poisson_gamma2 %>% select(c(bias, mse, coverage, gamma2)), by = gamma2) %>%
+  add_p()
+
+kable(design_performance_poisson_gamma2 %>% 
+  group_by(gamma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different Gamma2 Values (Poisson)") 
+
+design_performance_poisson_gamma2 %>%
+  group_by(gamma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = gamma2, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Gamma2 (Poisson)",
+       x = "Gamma2",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+```{r normal_gamma2_results}
+# read results
+design_performance_normal_gamma2 <- read.csv("../Results/design_performance_normal_gamma2.csv")
+
+ggplot(design_performance_normal_gamma2, aes(x = G, y = mse, color = factor(gamma2))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different Gamma2 Values",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+tbl_summary(design_performance_normal_gamma2 %>% select(c(bias, mse, coverage, gamma2)), by = gamma2) %>%
+  add_p()
+
+kable(design_performance_normal_gamma2 %>% 
+  group_by(gamma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different Gamma2 Values") 
+
+design_performance_normal_gamma2 %>%
+  group_by(gamma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = gamma2, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Gamma2",
+       x = "Gamma2",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+```{r normal_sigma2, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+alpha <- 5
+beta <- 0.5
+gamma2 <- 0.5
+n_sims <- 100
+
+sigma2_values <- seq(0.1, 3, by = 0.2)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_normal_sigma2 <- data.frame()
+
+for (sigma2 in sigma2_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims)
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_normal_sigma2 <- rbind(design_performance_normal_sigma2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      sigma2 = sigma2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_normal_sigma2, "../Results/design_performance_normal_sigma2.csv")
+
+```
+
+```{r normal_sigma2_results}
+# read results
+design_performance_normal_sigma2 <- read.csv("../Results/design_performance_normal_sigma2.csv")
+
+ggplot(design_performance_normal_sigma2, aes(x = G, y = mse, color = factor(sigma2))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different Sigma2 Values",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+tbl_summary(design_performance_normal_sigma2 %>% select(c(bias, mse, coverage, sigma2)), by = sigma2) %>%
+  add_p()
+
+kable(design_performance_normal_sigma2 %>% 
+  group_by(sigma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different Sigma2 Values")
+
+design_performance_normal_sigma2 %>% 
+  group_by(sigma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = sigma2, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Sigma2",
+       x = "Sigma2",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+```{r normal_c1_c2, eval=FALSE, include=FALSE}
+budget <- 1000
+alpha <- 5
+beta <- 0.5
+gamma2 <- 0.5
+sigma2 <- 1
+n_sims <- 100
+c2 <- 1
+
+c1_values <- seq(2, 20, by = 1)
+
+design_performance_normal_c1_c2 <- data.frame()
+
+for (c1 in c1_values) {
+  feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+  
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims)
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_normal_c1_c2 <- rbind(design_performance_normal_c1_c2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      c1 = c1,
+      c2 = c2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_normal_c1_c2, "../Results/design_performance_normal_c1_c2.csv")
+
+```
+
+```{r normal_c1_c2_results}
+# read results
+design_performance_normal_c1_c2 <- read.csv("../Results/design_performance_normal_c1_c2.csv")
+
+ggplot(design_performance_normal_c1_c2, aes(x = G, y = mse, color = factor(c1))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different c1/c2 ratio",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal() +
+  theme(legend.position="none")
+
+tbl_summary(design_performance_normal_c1_c2 %>% select(c(bias, mse, coverage, c1)), by = c1) %>%
+  add_p()
+
+kable(design_performance_normal_c1_c2 %>% 
+  group_by(c1) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different c1 Values")
+
+design_performance_normal_c1_c2 %>% 
+  group_by(c1) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = c1, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs c1",
+       x = "c1",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+```
+
+
+```{r poisson_sigma2, eval=FALSE, include=FALSE}
+budget <- 10000
+c1 <- 50
+c2 <- 10
+alpha <- 5
+beta <- 0.5
+gamma2 <- 0.5
+n_sims <- 100
+
+sigma2_values <- seq(0.1, 3, by = 0.2)
+
+feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+design_performance_poisson_sigma2 <- data.frame()
+
+for (sigma2 in sigma2_values) {
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims, distribution = 'poisson')
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_poisson_sigma2 <- rbind(design_performance_poisson_sigma2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      sigma2 = sigma2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_poisson_sigma2, "../Results/design_performance_poisson_sigma2.csv")
+
+```
+
+```{r poisson_sigma2_results}
+# read results
+design_performance_poisson_sigma2 <- read.csv("../Results/design_performance_poisson_sigma2.csv")
+
+ggplot(design_performance_poisson_sigma2, aes(x = G, y = mse, color = factor(sigma2))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different Sigma2 Values (Poisson)",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+tbl_summary(design_performance_poisson_sigma2 %>% select(c(bias, mse, coverage, sigma2)), by = sigma2) %>%
+  add_p()
+
+kable(design_performance_poisson_sigma2 %>% 
+  group_by(sigma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different Sigma2 Values (Poisson)")
+
+design_performance_poisson_sigma2 %>% 
+  group_by(sigma2) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = sigma2, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Sigma2 (Poisson)",
+       x = "Sigma2",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+```
+
+```{r poisson_c1_c2, eval=FALSE, include=FALSE}
+budget <- 1000
+alpha <- 5
+beta <- 0.5
+gamma2 <- 0.5
+sigma2 <- 1
+n_sims <- 100
+c2 <- 1
+
+c1_values <- seq(2, 20, by = 1)
+
+design_performance_poisson_c1_c2 <- data.frame()
+
+for (c1 in c1_values) {
+  feasible_designs <- calculate_feasible_designs(budget, c1, c2)
+  
+  for (design in feasible_designs) {
+    G <- design$G
+    R <- design$R
+    
+    if (G < 3) next
+    
+    sim_results <- run_simulation(G, R, alpha, beta, gamma2, sigma2, c1, c2, n_sims, distribution = 'poisson')
+    performance <- evaluate_design(sim_results, beta)
+    
+    design_performance_poisson_c1_c2 <- rbind(design_performance_poisson_c1_c2, data.frame(
+      G = performance$G,
+      R = performance$R,
+      total_cost = performance$total_cost,
+      c1 = c1,
+      c2 = c2,
+      bias = performance$bias,
+      mse = performance$mse,
+      coverage = performance$coverage
+    ))
+  }
+}
+
+write.csv(design_performance_poisson_c1_c2, "../Results/design_performance_poisson_c1_c2.csv")
+
+```
+
+```{r poisson_c1_c2_results}
+# read results
+design_performance_poisson_c1_c2 <- read.csv("../Results/design_performance_poisson_c1_c2.csv")
+
+ggplot(design_performance_poisson_c1_c2, aes(x = G, y = mse, color = factor(c1))) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs Clusters for Different c1/c2 ratio (Poisson)",
+       x = "Number of Clusters (G)",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal() +
+  theme(legend.position="none")
+
+tbl_summary(design_performance_poisson_c1_c2 %>% select(c(bias, mse, coverage, c1)), by = c1) %>%
+  add_p()
+
+kable(design_performance_poisson_c1_c2 %>% 
+  group_by(c1) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]),
+  caption = "Optimal Designs for Different c1 Values (Poisson)")
+
+design_performance_poisson_c1_c2 %>% 
+  group_by(c1) %>%
+  summarize(mean_mse = mean(mse), G = G[which.min(mse)], R = R[which.min(mse)], total_cost = total_cost[which.min(mse)]) %>%
+  ggplot(aes(x = c1, y = mean_mse)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Mean Squared Error vs c1 (Poisson)",
+       x = "c1",
+       y = "Mean Squared Error (MSE)") +
+  theme_minimal()
+
+```
+
+# Discussion
+
+# Code Appendix
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE}
+
+```
